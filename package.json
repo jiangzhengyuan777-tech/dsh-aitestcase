@@ -1,0 +1,58 @@
+{
+  "name": "dsh-aitestcase",
+  "version": "1.0.0",
+  "description": "AI 测试设计插件：需求 → 测试 PRD → 测试点 → 测试用例 → 质检评估，全部在 DSH 内完成，不依赖外部后端服务。",
+  "type": "module",
+  "main": "./lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "test": "node --test"
+  },
+  "files": [
+    "lib",
+    "assets",
+    "examples",
+    "cordis.patch.yml",
+    "README.md",
+    "USAGE.md",
+    "LICENSE",
+    "LICENSE.aitestcase"
+  ],
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "testing",
+    "test-design",
+    "testcase",
+    "qa",
+    "critic"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jiangzhengyuan777-tech/dsh-aitestcase.git"
+  },
+  "homepage": "https://github.com/jiangzhengyuan777-tech/dsh-aitestcase#readme",
+  "bugs": {
+    "url": "https://github.com/jiangzhengyuan777-tech/dsh-aitestcase/issues"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/schemastery": "^3.18.2"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-settings"
+      ]
+    }
+  }
+}
