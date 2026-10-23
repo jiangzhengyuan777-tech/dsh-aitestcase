@@ -1,0 +1,11 @@
+# dependencies (only linked locally for host-module unit tests)
+node_modules/
+
+# generated artifacts
+.aitestcase/
+.aitestcase-e2e/
+
+# editor / OS noise
+.DS_Store
+Thumbs.db
+*.log

@@ -1,0 +1,28 @@
+# dsh-aitestcase bundle patch: inserts the AI test-design plugin row into the
+# active profile (applied as a bundle layer through the `dsh.bundle.patch`
+# manifest field).
+#
+# The plugin runs entirely in the host process and calls ctx.llm directly, so
+# it needs no HTTP backend, no second API key and no extra port.
+#
+# `config` below restates every owned key so a later profile layer can override
+# individual values while keeping this bundle first in the stack. The same keys
+# are served in the Plugins-page live Config form (they are `.volatile()` in
+# lib/config.js), so most users never edit this file.
+- insert:
+    - id: aitestcase
+      name: dsh-aitestcase
+      config:
+        # Model route used for generation and evaluation.
+        provider: deepseek-official
+        model: deepseek-flash
+        temperature: 0
+        maxTokens: 20000
+        # Artifact directory. Relative paths resolve against the Session cwd.
+        outputDir: .aitestcase
+        saveArtifacts: true
+        # How many previous generations of the same session to feed back as
+        # continuity context (0 disables it).
+        historyRounds: 4
+        # Per-call input character cap; longer input is truncated and disclosed.
+        maxInputChars: 60000
