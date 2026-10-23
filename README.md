@@ -5,7 +5,7 @@
 **自包含**：不需要 Python、不需要单独开后端服务、不需要第二个 API Key、不占额外端口。
 装上就是完整能力，产出自动落盘，设置页即时可调。
 
-[![DSH](https://img.shields.io/badge/DeepSeek%20Harness-plugin-blue)](https://github.com/LiuYuan0115/AITestCase)
+[![DSH](https://img.shields.io/badge/DeepSeek%20Harness-plugin-blue)](https://github.com/jiangzhengyuan777-tech/dsh-aitestcase)
 [![License](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
 [![Tests](https://img.shields.io/badge/tests-32%20passing-brightgreen)](./test)
 
