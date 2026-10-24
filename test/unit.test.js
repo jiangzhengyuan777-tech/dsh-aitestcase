@@ -228,7 +228,7 @@ test('evaluations are recorded in session history', async () => {
 
   await ctx.toolsMap.get('aitestcase_evaluate').execute({ testcases: 'TC1' }, exec)
   const history = await ctx.toolsMap.get('aitestcase_history').execute({}, exec)
-  assert.match(history.text, /用例质检评估/)
+  assert.match(history.text, /AI 辅助评审/)
 })
 
 test('history is isolated per Session', async () => {
@@ -268,7 +268,58 @@ test('evaluate uses the evaluator prompt and the PRD/cases sections', async () =
   assert.match(user, /## 【待评审测试用例】/)
   assert.match(user, /## 【参考规范和历史用例】/)
   assert.match(user, /严格的 JSON 格式评估报告/)
-  assert.match(result.text, /【用例质检评估】/)
+  assert.match(result.text, /【AI 辅助评审】/)
+  assert.match(result.text, /```json/)
+})
+
+test('evaluate normalizes a fenced JSON answer without a repair call', async () => {
+  clearGenerations()
+  const ctx = makeCtx('```json\n{"score": 88, "coverage_gap": ["边界"]}\n```')
+  apply(ctx, { saveArtifacts: false })
+  const result = await ctx.toolsMap.get('aitestcase_evaluate').execute({ testcases: 'TC1' }, makeExec())
+  assert.equal(ctx.calls.length, 1, 'a parseable answer needs no repair')
+  assert.match(result.text, /"score": 88/)
+  assert.doesNotMatch(result.text, /一次修复调用/)
+})
+
+test('evaluate repairs an unparseable answer with exactly one extra call', async () => {
+  clearGenerations()
+  let call = 0
+  const ctx = makeCtx()
+  ctx.llm.stream = (options) => {
+    ctx.calls.push(options)
+    call += 1
+    const text = call === 1 ? '评分 70 分，边界覆盖不足。' : '{"score": 70, "coverage_gap": ["边界"]}'
+    return (async function* run() {
+      yield { type: 'text-delta', index: 0, text }
+      yield { type: 'finish', reason: { kind: 'stop' } }
+    })()
+  }
+  apply(ctx, { saveArtifacts: false })
+  const result = await ctx.toolsMap.get('aitestcase_evaluate').execute({ testcases: 'TC1' }, makeExec())
+  assert.equal(ctx.calls.length, 2, 'one repair call, no more')
+  assert.match(result.text, /一次修复调用/)
+  assert.match(result.text, /"score": 70/)
+  assert.doesNotMatch(result.text, /未返回合法 JSON/)
+})
+
+test('evaluate keeps the raw answer when repair also fails, without throwing', async () => {
+  clearGenerations()
+  const ctx = makeCtx('这不是 JSON，只是评审意见。')
+  apply(ctx, { saveArtifacts: false })
+  const result = await ctx.toolsMap.get('aitestcase_evaluate').execute({ testcases: 'TC1' }, makeExec())
+  assert.equal(ctx.calls.length, 2, 'repair was attempted once')
+  assert.match(result.text, /未返回合法 JSON/)
+  assert.match(result.text, /只是评审意见/)
+})
+
+test('jsonRepair=false skips the repair call entirely', async () => {
+  clearGenerations()
+  const ctx = makeCtx('不是 JSON')
+  apply(ctx, { saveArtifacts: false, jsonRepair: false })
+  const result = await ctx.toolsMap.get('aitestcase_evaluate').execute({ testcases: 'TC1' }, makeExec())
+  assert.equal(ctx.calls.length, 1)
+  assert.match(result.text, /未返回合法 JSON/)
 })
 
 test('missing required arguments fail loudly', async () => {
@@ -297,18 +348,23 @@ test('an unsupported testcase format is rejected before any model call', async (
   assert.equal(ctx.calls.length, 0)
 })
 
-test('over-long input is truncated and disclosed', async () => {
+test('over-long input is truncated and disclosed against the whole-request budget', async () => {
   clearGenerations()
   const ctx = makeCtx('结果')
-  apply(ctx, { maxInputChars: 1000, saveArtifacts: false })
+  // The testpoint template alone is ~1.5k chars, so 3000 leaves room for a
+  // shortened input while still forcing a truncation.
+  apply(ctx, { maxInputChars: 3000, saveArtifacts: false })
   const result = await ctx.toolsMap.get('aitestcase_testpoints').execute(
-    { requirement: 'A'.repeat(4000) },
+    { requirement: 'A'.repeat(8000) },
     makeExec(),
   )
-  const user = ctx.calls[0].messages[0].content[0].text
-  assert.ok(user.length < 4000, 'input must be truncated')
+  const call = ctx.calls[0]
+  const user = call.messages[0].content[0].text
+  assert.ok(user.length < 8000, 'input must be truncated')
   assert.match(user, /已截断/)
-  assert.match(result.text, /超出长度上限/)
+  assert.ok(call.system.length + user.length <= 3000, 'whole request must fit the budget')
+  assert.match(result.text, /输入超出剩余上下文预算/)
+  assert.match(result.text, /上下文用量/)
 })
 
 test('usage line reports cache reads instead of looking truncated', () => {
@@ -328,7 +384,7 @@ test('model errors surface instead of returning empty text', async () => {
     (async function* failing() {
       yield { type: 'finish', reason: { kind: 'error', failure: { code: 'TIMEOUT', message: '超时了' } } }
     })()
-  apply(ctx, {})
+  apply(ctx, { maxRetries: 0 })
   await assert.rejects(
     () => ctx.toolsMap.get('aitestcase_testpoints').execute({ requirement: '需求' }, makeExec()),
     /模型调用失败 \[TIMEOUT\]: 超时了/,

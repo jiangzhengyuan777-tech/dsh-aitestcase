@@ -76,7 +76,7 @@ PRD → 测试点 → 表格用例 → 质检，最后只汇总结果路径和�
 ### 3.2 直接评审一份现有用例
 
 ```
-用 aitestcase_evaluate 对下面这份用例做对抗式评审，重点看边界值、异常路径和安全性，
+用 aitestcase_evaluate 对下面这份用例做 AI 辅助评审，重点看边界值、异常路径和安全性，
 给出评分、漏测点、逻辑问题和补充用例。
 
 （粘贴用例，或给 testcasesFile 路径）
@@ -141,12 +141,34 @@ PRD → 测试点 → 表格用例 → 质检，最后只汇总结果路径和�
 产出：JSON 报告，含 `score`（0–100）、`coverage_gap`、`logic_issues`、
 `duplicates`、`suggestions`、`risk_points`、`supplementary_cases`。
 
+### 长任务与容错（四个重型工具通用）
+
+`aitestcase_testprd` / `aitestcase_testpoints` / `aitestcase_testcases` / `aitestcase_evaluate`
+都支持三个可选参数：
+
+| 参数 | 说明 |
+|---|---|
+| `background` | `true` = 后台任务运行，立即返回 job id；之后用 `job_output` 读结果、`job_kill` 取消。默认同步等待（生成通常 30–120 秒）。环境没有任务注册表时会自动降级为同步执行，不报错 |
+
+后台任务用法：
+
+```
+用 aitestcase_testcases 生成表格用例，background=true，先只把 job id 告诉我。
+（拿到 id 后）用 job_output 读取 job id = "aitestcase-1" 的结果。
+```
+
+另外两项内建容错：
+
+- **重试**：限流、超时、5xx、空响应会按 `retryBaseMs` 指数退避自动重试（默认 2 次）；
+  参数错误、上下文超限、鉴权失败等致命错误不重试。重试成功时结果里会注明「第 N 次尝试」。
+- **上下文预算**：`maxInputChars` 是整次请求预算。超出时按「模板 > 历史 > 输入」的顺序保：
+  模板永不截断，历史先生效裁剪，输入最后截断；发生裁剪时结果里会给出「上下文用量」。
 ### `aitestcase_history`
 
 | 参数 | 说明 |
 |---|---|
 | `limit` | 返回条数，默认 3，最大 10 |
-| `type` | 按类型过滤，如 `测试点`、`测试用例`、`用例质检评估` |
+| `type` | 按类型过滤，如 `测试点`、`测试用例`、`AI 辅助评审` |
 | `full` | `true` 返回完整正文，默认只给摘要 |
 
 ### `aitestcase_status`
@@ -204,7 +226,11 @@ PRD → 测试点 → 表格用例 → 质检，最后只汇总结果路径和�
 | `outputDir` | `.aitestcase` | 产物目录，相对路径按会话工作目录解析 |
 | `saveArtifacts` | `true` | 是否把每次生成落盘 |
 | `historyRounds` | `4` | 回灌本会话前几轮结果做延续上下文，`0` 关闭 |
-| `maxInputChars` | `60000` | 单次输入字符上限，超出截断并注明 |
+| `maxInputChars` | `60000` | 整次请求字符预算：模板 + 历史 + 本次输入；超出时先裁历史再截输入 |
+| `historyShare` | `0.35` | 剩余预算里允许历史上下文占用的比例（0–1） |
+| `maxRetries` | `2` | 瞬时故障自动重试次数（限流/超时/5xx/空响应），0 关闭 |
+| `retryBaseMs` | `800` | 重试退避基数（毫秒），指数退避 + 抖动 |
+| `jsonRepair` | `true` | 评审结果不是合法 JSON 时追加一次最小修复调用 |
 
 也可以直接改 profile 的 `cordis.patch.yml` 里 `id: aitestcase` 那一行的 `config`。
 
@@ -243,9 +269,19 @@ PRD → 测试点 → 表格用例 → 质检，最后只汇总结果路径和�
 
 ---
 
+| 结果里出现「模型调用重试后成功」 | 正常：瞬时故障已自动恢复，无需处理 |
+| 结果里出现「输入超出剩余上下文预算」 | 需求太长：提高 `maxInputChars`，或分模块分批生成 |
+| 结果里出现「历史上下文裁剪了 N 条」 | 历史占预算：调低 `historyRounds` 或 `historyShare` |
+| 评审结果带「一次修复调用」 | 正常：模型首次输出不是合法 JSON，已自动修复 |
+| 评审结果带「未返回合法 JSON」 | 修复也失败：重跑一次，或把 `jsonRepair` 保持开启后降低输入长度 |
+| 想要长任务不阻塞对话 | 给重型工具传 `background=true`，再用 `job_output` 取结果 |
+| 后台任务报「不可用」 | 当前 profile 没有任务注册表，插件已降级同步执行，功能不受影响 |
 ## 9. 能力边界
 
-**包含**：需求分析、测试点、三种格式用例、对抗式质检、会话内增量修改、产物落盘、文件输入。
+**包含**：需求分析、测试点、三种格式用例、AI 辅助评审、会话内增量修改、产物落盘、文件输入、
+整次请求上下文预算、瞬时故障重试、长任务后台化、评审 JSON 规范化与修复。
+
+**已知边界**：超长需求在超过 `maxInputChars` 时会被截断（结果里会注明用量），需要手动拆分或调高预算；本插件不做分块 map-reduce。
 
 **不包含**（原 AITestCase 项目才有）：向量库历史检索、文档库指针管理、PDF/图片 OCR、
 Figma 解析、UI 自动化执行（Midscene）。需要这些时，原项目仍可单独运行：
@@ -263,7 +299,7 @@ Figma 解析、UI 自动化执行（Midscene）。需要这些时，原项目仍
 
 ```sh
 cd dsh-aitestcase-plugin
-node --test          # 32 个单元测试：工具逻辑、配置 schema、客户端页面、文件输入
+node --test          # 90 个单元测试：工具逻辑、预算、重试、后台任务、JSON 修复、prompt 契约、配置、客户端、文件输入
 ```
 
 目录结构：

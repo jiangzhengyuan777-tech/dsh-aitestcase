@@ -1,6 +1,6 @@
 {
   "name": "dsh-aitestcase",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "AI 测试设计插件：需求 → 测试 PRD → 测试点 → 测试用例 → 质检评估，全部在 DSH 内完成，不依赖外部后端服务。",
   "type": "module",
   "main": "./lib/index.js",

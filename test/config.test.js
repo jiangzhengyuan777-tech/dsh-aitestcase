@@ -8,21 +8,23 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
+import { DEFAULT_OPTIONS, resolveOptions } from '../lib/options.js'
+import { registerTools } from '../lib/tools.js'
 
 // schemastery is a host-provided peer: present in a DSH runtime (or when a local
 // link exists), absent in a bare checkout. Skip instead of failing there.
-let Config
-let DEFAULT_OPTIONS
-let resolveOptions
-let registerTools
 let schemasteryReady = true
 try {
-  ;({ Config } = await import('../lib/config.js'))
-  ;({ DEFAULT_OPTIONS, resolveOptions } = await import('../lib/options.js'))
-  ;({ registerTools } = await import('../lib/tools.js'))
-} catch {
+  import.meta.resolve('@deepseek-ai/schemastery')
+} catch (error) {
+  // Only an absent direct host peer is optional. Broken source code, an invalid
+  // package export, or a missing transitive dependency must fail the test run.
+  if (error.code !== 'ERR_MODULE_NOT_FOUND' || !/^Cannot find package '@deepseek-ai\/schemastery' imported from /.test(error.message)) {
+    throw error
+  }
   schemasteryReady = false
 }
+const Config = schemasteryReady ? (await import('../lib/config.js')).Config : undefined
 const testWithHost = schemasteryReady ? test : test.skip
 
 const PATCH_URL = new URL('../cordis.patch.yml', import.meta.url)
@@ -34,11 +36,15 @@ testWithHost('Config is a schemastery object exposing exactly the documented fie
   const keys = Object.keys(dict).sort()
   assert.deepEqual(keys, [
     'historyRounds',
+    'historyShare',
+    'jsonRepair',
     'maxInputChars',
+    'maxRetries',
     'maxTokens',
     'model',
     'outputDir',
     'provider',
+    'retryBaseMs',
     'saveArtifacts',
     'temperature',
   ])
@@ -57,7 +63,31 @@ testWithHost('Config fills defaults and rejects out-of-range values', () => {
   assert.throws(() => Config({ temperature: 99 }), /temperature/)
   assert.throws(() => Config({ historyRounds: 99 }), /historyRounds/)
   assert.throws(() => Config({ maxInputChars: 10 }), /maxInputChars/)
-  assert.throws(() => Config({ maxTokens: 4096 }), /maxTokens/)
+  assert.throws(() => Config({ maxTokens: 255 }), /maxTokens/)
+})
+
+testWithHost('Config accepts integer token and context budgets at both boundaries', () => {
+  for (const maxTokens of [256, 257, 4096, 65535, 65536]) {
+    assert.equal(resolveOptions(Config({ maxTokens })).maxTokens, maxTokens)
+  }
+  for (const maxTokens of [255, 65537, 256.5]) {
+    assert.throws(() => Config({ maxTokens }), /maxTokens/)
+  }
+  for (const maxInputChars of [1000, 1001, 199999, 200000]) {
+    assert.equal(resolveOptions(Config({ maxInputChars })).maxInputChars, maxInputChars)
+  }
+  for (const maxInputChars of [999, 200001, 1000.5]) {
+    assert.throws(() => Config({ maxInputChars }), /maxInputChars/)
+  }
+})
+
+test('option resolution clamps token and context budgets consistently without host schemas', () => {
+  assert.equal(resolveOptions({ maxTokens: 255 }).maxTokens, 256)
+  assert.equal(resolveOptions({ maxTokens: 65537 }).maxTokens, 65536)
+  assert.equal(resolveOptions({ maxTokens: 4096 }).maxTokens, 4096)
+  assert.equal(resolveOptions({ maxInputChars: 999 }).maxInputChars, 1000)
+  assert.equal(resolveOptions({ maxInputChars: 200001 }).maxInputChars, 200000)
+  assert.equal(resolveOptions({ maxInputChars: 1001 }).maxInputChars, 1001)
 })
 
 testWithHost('every key in the bundle patch is a known Config field', () => {

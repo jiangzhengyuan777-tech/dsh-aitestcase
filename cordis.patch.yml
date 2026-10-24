@@ -24,5 +24,14 @@
         # How many previous generations of the same session to feed back as
         # continuity context (0 disables it).
         historyRounds: 4
-        # Per-call input character cap; longer input is truncated and disclosed.
+        # Whole-request character budget: system template + history + input.
+        # The template is never cut; history is fitted first, then the input.
         maxInputChars: 60000
+        # Share of the remaining budget the continuity history may use (0–1).
+        historyShare: 0.35
+        # Transient-failure retries for one model call (0 disables retrying).
+        maxRetries: 2
+        # Exponential backoff base in milliseconds (plus jitter).
+        retryBaseMs: 800
+        # Repair an evaluation answer that is not valid JSON (one extra call).
+        jsonRepair: true

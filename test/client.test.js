@@ -6,7 +6,8 @@
 // createElement stub, and the render pass walks the returned tree. That catches
 // syntax errors, a wrong module id, a wrong slot registration, and a component
 // that throws on first render — the failures that would otherwise only show up
-// as a broken page.
+// as a broken page. Clipboard tests also exercise the real click handlers and
+// re-render their state; this is not a browser or host integration test.
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
@@ -15,7 +16,7 @@ import { readFileSync } from 'node:fs'
 
 const CLIENT_URL = new URL('../lib/client.js', import.meta.url)
 
-function createHarness() {
+function createHarness({ navigator = {}, document = {} } = {}) {
   const source = readFileSync(CLIENT_URL, 'utf8')
   let loaded = null
   const sandbox = {
@@ -26,7 +27,7 @@ function createHarness() {
         },
       },
     },
-    navigator: {},
+    navigator,
     document: {
       createElement() {
         return { style: {}, select() {}, value: '' }
@@ -35,6 +36,7 @@ function createHarness() {
       execCommand() {
         return true
       },
+      ...document,
     },
     setTimeout: () => 0,
     console,
@@ -42,12 +44,16 @@ function createHarness() {
   vm.createContext(sandbox)
   vm.runInContext(source, sandbox, { filename: 'lib/client.js' })
 
+  const states = []
+  let hookIndex = 0
   const react = {
     createElement(type, props, ...children) {
-      return { type, props: props || {}, children }
+      return { type, props: { ...props, children }, children }
     },
     useState(initial) {
-      return [initial, () => {}]
+      const index = hookIndex++
+      if (!(index in states)) states[index] = initial
+      return [states[index], (next) => { states[index] = next }]
     },
   }
   const require = (id) => {
@@ -55,7 +61,21 @@ function createHarness() {
     throw new Error(`unexpected client require: ${id}`)
   }
   const exported = loaded.factory(require)
-  return { loaded, exported }
+  let section
+  exported.apply({
+    slots: {
+      inject: (_key, callback) => callback(),
+      register: (_options, component) => { section = component; return () => {} },
+    },
+  })
+  return {
+    loaded,
+    exported,
+    renderSection() {
+      hookIndex = 0
+      return section()
+    },
+  }
 }
 
 function flatten(node, out = []) {
@@ -69,6 +89,7 @@ function flatten(node, out = []) {
     return out
   }
   if (typeof node === 'object' && node.children) {
+    if (typeof node.type === 'function') return flatten(node.type(node.props), out)
     for (const child of node.children) flatten(child, out)
   }
   return out
@@ -129,7 +150,12 @@ test('the settings page renders readable content with every capability', () => {
   const text = flatten(tree).join(' | ')
 
   assert.match(text, /测试设计/)
-  assert.match(text, /自包含/)
+  assert.match(text, /本地编排/)
+  assert.match(text, /不代表本地推理/)
+  assert.match(text, /AI 辅助评审/)
+  assert.match(text, /说明页已打开 v\d+\.\d+\.\d+/)
+  assert.match(text, /请运行 aitestcase_status 自检/)
+  assert.doesNotMatch(text, /● 已加载|无外部依赖/)
   for (const tool of [
     'aitestcase_testprd',
     'aitestcase_testpoints',
@@ -158,4 +184,70 @@ test('the page survives a render with no clipboard support', () => {
     },
   })
   assert.doesNotThrow(() => component())
+})
+
+function buttons(node, found = []) {
+  if (!node || typeof node !== 'object') return found
+  if (Array.isArray(node)) {
+    for (const child of node) buttons(child, found)
+    return found
+  }
+  if (node.type === 'button') found.push(node)
+  for (const child of node.children || []) buttons(child, found)
+  return found
+}
+
+test('clipboard success displays copied only after the write resolves', async () => {
+  let finishWrite
+  const harness = createHarness({
+    navigator: { clipboard: { writeText: () => new Promise((resolve) => { finishWrite = resolve }) } },
+  })
+  buttons(harness.renderSection())[0].props.onClick()
+  assert.doesNotMatch(flatten(harness.renderSection()).join(' '), /已复制/)
+  finishWrite()
+  await Promise.resolve()
+  assert.match(flatten(harness.renderSection()).join(' '), /已复制/)
+})
+
+test('clipboard rejection falls back and reports a failed copy without exposing the error', async () => {
+  let fallbackAttempts = 0
+  let removed = 0
+  const harness = createHarness({
+    navigator: { clipboard: { writeText: () => Promise.reject(new Error('private permission details')) } },
+    document: {
+      execCommand: () => { fallbackAttempts++; return false },
+      body: { appendChild() {}, removeChild() { removed++ } },
+    },
+  })
+  buttons(harness.renderSection())[0].props.onClick()
+  await Promise.resolve()
+  const text = flatten(harness.renderSection()).join(' ')
+  assert.equal(fallbackAttempts, 1)
+  assert.equal(removed, 1)
+  assert.match(text, /复制失败，请手动选择文本/)
+  assert.doesNotMatch(text, /已复制|private permission details/)
+})
+
+test('clipboard rejection may use a successful legacy copy fallback', async () => {
+  const harness = createHarness({
+    navigator: { clipboard: { writeText: () => Promise.reject(new Error('denied')) } },
+  })
+  buttons(harness.renderSection())[0].props.onClick()
+  await Promise.resolve()
+  const text = flatten(harness.renderSection()).join(' ')
+  assert.match(text, /已复制/)
+  assert.doesNotMatch(text, /复制失败/)
+})
+
+test('missing clipboard API reports legacy copy errors and cleans up its temporary element', () => {
+  let removed = 0
+  const harness = createHarness({
+    document: {
+      execCommand: () => { throw new Error('unsupported') },
+      body: { appendChild() {}, removeChild() { removed++ } },
+    },
+  })
+  buttons(harness.renderSection())[0].props.onClick()
+  assert.equal(removed, 1)
+  assert.match(flatten(harness.renderSection()).join(' '), /复制失败，请手动选择文本/)
 })
